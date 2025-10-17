@@ -8,19 +8,17 @@ from utils.auth import role_country_selector
 from services.data_io import generate_dummy_population
 from services.risk_api import score_batch
 from utils.kpis import compute_core_kpis
-from components.cards import render_cards
-from components.charts import risk_hist, region_heat, survival_deciles
+import components.charts as ch             # <- import del módulo completo
 from components.cohort_filters import cohort_builder
 
 st.set_page_config(page_title="Dashboard Ejecutivo", page_icon="📊", layout="wide")
 
-# Altair sin límite de filas
 try:
     alt.data_transformers.disable_max_rows()
 except Exception:
     pass
 
-# --- ÚNICA llamada al selector ---
+# Única llamada al selector + toggle debug
 country, role = role_country_selector()
 debug = st.sidebar.toggle("Modo debug (curvas)", value=False, key="debug_curves")
 
@@ -34,6 +32,7 @@ df = get_scored_population(country)
 
 st.header("Dashboard Ejecutivo — Población & Riesgo")
 kpis = compute_core_kpis(df, country)
+from components.cards import render_cards
 render_cards(kpis)
 
 st.divider()
@@ -47,20 +46,20 @@ with col1:
     if df_cohort.empty:
         st.info("No hay datos para la cohorte seleccionada.")
     else:
-        risk_hist(df_cohort)
+        ch.risk_hist(df_cohort)
 
 with col2:
     st.subheader("Riesgo por región (heat)")
     if df_cohort.empty:
         st.info("No hay datos para la cohorte seleccionada.")
     else:
-        region_heat(df_cohort)
+        ch.region_heat(df_cohort)
 
 st.subheader("Curvas de riesgo acumulado por decil")
 if df_cohort.empty:
     st.info("No hay datos para la cohorte seleccionada.")
 else:
-    survival_deciles(df_cohort, debug=debug)
+    ch.survival_deciles(df_cohort, debug=debug)
 
 # ================================
 # Exploraciones adicionales (5)
