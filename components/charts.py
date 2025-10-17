@@ -29,6 +29,7 @@ def region_heat(df):
     ).properties(height=200)
     st.altair_chart(chart, use_container_width=True)
 
+
 def survival_deciles(df):
     """Curvas acumuladas por 'deciles' (robusta a cohortes pequeños o pocos valores únicos)."""
     if df.empty or "risk_factor" not in df:
@@ -36,26 +37,21 @@ def survival_deciles(df):
         return
 
     df = df.copy()
-    # Número de quantiles posible (máx 10, mín 2)
     unique_vals = df["risk_factor"].nunique(dropna=True)
-    q = int(max(2, min(10, unique_vals, len(df))))  # asegura al menos 2 líneas
+    q = int(max(2, min(10, unique_vals, len(df))))  # al menos 2 grupos
 
     try:
         df["risk_decile"] = pd.qcut(
-            df["risk_factor"],
-            q,
+            df["risk_factor"], q,
             labels=[f"D{i}" for i in range(1, q+1)],
             duplicates="drop"
         )
     except Exception:
-        # Fallback a 'cut' equiespaciado si qcut falla por bordes duplicados
         df["risk_decile"] = pd.cut(
-            df["risk_factor"],
-            q,
+            df["risk_factor"], q,
             labels=[f"D{i}" for i in range(1, q+1)]
         )
 
-    # Si todo quedó NaN (caso extremo), mostramos 1 sola curva “cohorte”
     if df["risk_decile"].isna().all():
         base = float(df["risk_factor"].mean() or 0.05)
         months = np.arange(1, 13)
@@ -82,6 +78,7 @@ def survival_deciles(df):
         tooltip=["decile","month","cum_risk"]
     ).properties(height=260)
     st.altair_chart(chart, use_container_width=True)
+
     
 def top_features_bar(top_features):
     df = pd.DataFrame(top_features)
