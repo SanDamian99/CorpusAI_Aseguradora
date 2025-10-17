@@ -15,73 +15,135 @@ def survival_deciles(df, debug: bool = False):
 
     if "risk_factor" not in df.columns:
         if debug: st.write("DEBUG: falta 'risk_factor'"); print("[survival_deciles] falta 'risk_factor'")
+        st.info("No hay columndef survival_deciles(df, debug: bool = False):
+    """Curvas acumuladas por 'deciles' (robusta y con panel de debug opcional)."""
+    # ---------- Guardas ----------
+    if df is None or df.empty:
+        st.info("No hay datos de cohorte para graficar.")
+        if debug:
+            with st.expander("DEBUG — survival_deciles", expanded=True):
+                st.write("df es None o vacío.")
+        return
+    if "risk_factor" not in df.columns:
         st.info("No hay columna 'risk_factor' en la cohorte.")
+        if debug:
+            with st.expander("DEBUG — survival_deciles", expanded=True):
+                st.write("Columnas disponibles:", list(df.columns))
         return
 
+    # ---------- Preparación ----------
     df = df.copy()
+    # Coerción numérica y limpieza
     df["risk_factor"] = pd.to_numeric(df["risk_factor"], errors="coerce")
+    before = len(df)
     df = df.dropna(subset=["risk_factor"])
-    if df.empty:
-        if debug: st.write("DEBUG: risk_factor quedó NaN"); print("[survival_deciles] risk_factor NaN")
+    after = len(df)
+
+    # Métricas base para debug
+    n = len(df)
+    nunique = df["risk_factor"].nunique(dropna=True)
+    rf_desc = df["risk_factor"].describe() if n else None
+    q_try = int(max(2, min(10, nunique, n)))  # 2..10
+
+    # ---------- Panel de debug (previo) ----------
+    qtiles = None
+    if debug:
+        with st.expander("DEBUG — survival_deciles (insumos)", expanded=True):
+            st.write(f"Registros (original/coerción/NaN drop): {before} → {after} → {n}")
+            st.write(f"Valores únicos risk_factor: {nunique}")
+            st.write(f"q (número de grupos): {q_try}")
+            if rf_desc is not None:
+                st.write("describe(risk_factor):", rf_desc.to_frame().T)
+            # quantiles “target” que intentará qcut
+            try:
+                qtiles = df["risk_factor"].quantile(np.linspace(0, 1, q_try + 1)).round(6)
+                st.write("Quantiles estimados:", qtiles)
+            except Exception as e:
+                st.write("Fallo al calcular quantiles:", repr(e))
+
+    if n == 0:
         st.info("No hay 'risk_factor' válido para graficar.")
         return
 
-    unique_vals = df["risk_factor"].nunique(dropna=True)
-    q = int(max(2, min(10, unique_vals, len(df))))  # 2..10 grupos
-    if debug:
-        st.caption(f"DEBUG — n={len(df)}, unique_vals={unique_vals}, q={q}, mean_rf={df['risk_factor'].mean():.4f}")
-        print(f"[survival_deciles] n={len(df)} unique={unique_vals} q={q}")
-
+    # ---------- Segmentación por 'deciles' (o grupos) ----------
+    seg_ok = True
     try:
         df["risk_decile"] = pd.qcut(
-            df["risk_factor"], q,
-            labels=[f"D{i}" for i in range(1, q+1)],
-            duplicates="drop"
+            df["risk_factor"],
+            q_try,
+            labels=[f"D{i}" for i in range(1, q_try + 1)],
+            duplicates="drop",
         )
     except Exception as e:
-        if debug: st.write("DEBUG: qcut falló → cut"); print("[survival_deciles] qcut fail:", repr(e))
-        df["risk_decile"] = pd.cut(
-            df["risk_factor"], q,
-            labels=[f"D{i}" for i in range(1, q+1)]
-        )
+        seg_ok = False
+        if debug:
+            with st.expander("DEBUG — survival_deciles (segmentación)", expanded=True):
+                st.write("qcut falló → usar cut. Error:", repr(e))
+        # Fallback por rangos equiespaciados
+        try:
+            df["risk_decile"] = pd.cut(
+                df["risk_factor"],
+                q_try,
+                labels=[f"D{i}" for i in range(1, q_try + 1)],
+                include_lowest=True,
+            )
+            seg_ok = True
+        except Exception as e2:
+            if debug:
+                st.write("cut también falló:", repr(e2))
 
-    # Si no se pudo segmentar, curva única
-    if df["risk_decile"].isna().all():
+    # Si tras segmentar todo quedó NaN, forzamos curva única
+    force_single = df["risk_decile"].isna().all()
+
+    # ---------- Construcción de la data a graficar ----------
+    months = np.arange(1, 13)
+    records = []
+
+    if not seg_ok or force_single:
+        # Curva única (Cohorte)
         base = float(df["risk_factor"].mean() or 0.05)
-        months = np.arange(1, 13)
-        cum = np.cumsum(np.full_like(months, base/12.0))
-        data = pd.DataFrame({
-            "decile": ["Cohorte"] * len(months),
-            "month": months.astype(int),
-            "cum_risk": np.minimum(cum, 0.95).astype(float)
-        })
-        if debug: st.write("DEBUG: fallback curva única — base", base); print("[survival_deciles] fallback base", base)
+        cum = np.cumsum(np.full_like(months, base / 12.0))
+        for m, c in zip(months, cum):
+            records.append({"decile": "Cohorte", "month": int(m), "cum_risk": float(min(c, 0.95))})
+        seg_counts = None
     else:
-        months = np.arange(1, 13)
-        recs = []
-        # observed=False para mantener compatibilidad y evitar FutureWarning
+        # Curvas por grupo
         for d, sub in df.dropna(subset=["risk_decile"]).groupby("risk_decile", observed=False):
             base = float(sub["risk_factor"].mean() or 0.05)
-            cum = np.cumsum(np.full_like(months, base/12.0))
+            cum = np.cumsum(np.full_like(months, base / 12.0))
             for m, c in zip(months, cum):
-                recs.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c, 0.95))})
-        data = pd.DataFrame(recs)
-        if debug:
-            counts = df["risk_decile"].value_counts(dropna=False).to_frame("n")
-            st.write("DEBUG: grupos por decil", counts)
-            print("[survival_deciles] grupos:\n", counts.to_string())
+                records.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c, 0.95))})
+        # Conteos por grupo para debug
+        seg_counts = (
+            df["risk_decile"].value_counts(dropna=False)
+            .rename("n")
+            .to_frame()
+            .reset_index()
+            .rename(columns={"index": "group"})
+            .sort_values("group")
+        )
 
+    data = pd.DataFrame(records)
+
+    # ---------- Panel de debug (posterior) ----------
+    if debug:
+        with st.expander("DEBUG — survival_deciles (salida)", expanded=True):
+            st.write("¿Segmentación OK?:", seg_ok, " — ¿Curva única?:", force_single)
+            if seg_counts is not None:
+                st.write("Conteos por grupo:", seg_counts)
+            st.write("Head de 'data' que se grafica:", data.head())
+
+    # ---------- Guardas finales ----------
     if data.empty:
-        if debug: st.write("DEBUG: data vacío"); print("[survival_deciles] data vacío")
-        st.info("No fue posible construir la curva de supervivencia.")
+        st.warning("No fue posible construir la curva de riesgo acumulado (data vacía).")
         return
 
-    if debug: st.write("DEBUG: muestra data", data.head()); print("[survival_deciles] head:\n", data.head().to_string())
-
+    # ---------- Gráfico ----------
     chart = alt.Chart(data).mark_line().encode(
         x=alt.X("month:Q", title="Mes"),
         y=alt.Y("cum_risk:Q", title="Riesgo acumulado", scale=alt.Scale(domain=[0, 1])),
         color=alt.Color("decile:N", title="Decil"),
-        tooltip=["decile","month","cum_risk"]
+        tooltip=["decile", "month", "cum_risk"],
     ).properties(height=260)
+
     st.altair_chart(chart, use_container_width=True)
