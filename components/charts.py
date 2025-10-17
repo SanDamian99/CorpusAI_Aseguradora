@@ -342,4 +342,24 @@ def scenario_bars(data, x=None, y=None, color=None, title: str = "Escenarios") -
                 long_df["metric"] = "valor"
                 long_df = long_df[["scenario", "metric", "value"]]
             else:
-                st.info("Estructura de esce
+                st.info("Estructura de escenarios no reconocida.")
+                return
+
+    # Permitir sobre-escritura manual
+    if x: long_df = long_df.rename(columns={x: "scenario"})
+    if y: long_df = long_df.rename(columns={y: "value"})
+    if color: long_df = long_df.rename(columns={color: "metric"})
+
+    # Construcción de barras
+    chart = (
+        alt.Chart(long_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("scenario:N", title="Escenario"),
+            y=alt.Y("value:Q", title="Valor"),
+            color=alt.Color("metric:N", title="Métrica"),
+            tooltip=["scenario", "metric", alt.Tooltip("value:Q", format=".2f")],
+        )
+        .properties(height=320, title=title)
+    )
+    st.altair_chart(chart, use_container_width=True)
