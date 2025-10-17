@@ -120,7 +120,6 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
     q_try = int(max(2, min(10, nunique, n)))  # 2..10 grupos
 
     rf_desc = df["risk_factor"].describe()
-    qtiles = None
     if debug:
         with st.expander("DEBUG — survival_deciles (insumos)", expanded=True):
             st.write(f"Registros (original → drop NaN): {before} → {after}")
@@ -189,13 +188,14 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
                         "cum_risk": float(min(c, 0.95)),
                     }
                 )
+
+        # ✅ ROBUSTO: nombra siempre la columna del índice como 'group'
         seg_counts = (
             df["risk_decile"]
             .value_counts(dropna=False)
             .rename("n")
-            .to_frame()
-            .reset_index()
-            .rename(columns={"index": "group"})
+            .rename_axis("group")   # <- aquí definimos el nombre del índice
+            .reset_index()          # <- ahora 'group' es columna segura
             .sort_values("group")
         )
 
