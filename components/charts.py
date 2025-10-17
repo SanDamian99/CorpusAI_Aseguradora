@@ -1,0 +1,68 @@
+# components/charts.py
+import altair as alt
+import pandas as pd
+import numpy as np
+import streamlit as st
+
+def risk_hist(df):
+    data = df[["risk_factor"]].copy()
+    data["bin"] = (data["risk_factor"]*10).astype(int)/10
+    agg = data.groupby("bin", as_index=False).size()
+    chart = alt.Chart(agg).mark_bar().encode(
+        x=alt.X("bin:Q", title="Riesgo (binned, 0-1)", bin=alt.Bin(step=0.1)),
+        y=alt.Y("size:Q", title="Pacientes"),
+        tooltip=["bin","size"]
+    ).properties(height=200)
+    st.altair_chart(chart, use_container_width=True)
+
+def region_heat(df):
+    # Mapa abstracto tipo heat (no geográfico), por región
+    agg = df.groupby("region", as_index=False).agg(
+        avg_risk=("risk_factor","mean"),
+        n=("patient_id","count"),
+    )
+    chart = alt.Chart(agg).mark_rect(cornerRadius=6).encode(
+        x=alt.X("region:N", title="Región"),
+        y=alt.Y("n:Q", title="Tamaño cohorte", scale=alt.Scale(type="sqrt")),
+        color=alt.Color("avg_risk:Q", title="Riesgo prom.", scale=alt.Scale(scheme="orangered")),
+        tooltip=["region","n","avg_risk"]
+    ).properties(height=200)
+    st.altair_chart(chart, use_container_width=True)
+
+def survival_deciles(df):
+    # Curva acumulada promedio por decil de riesgo
+    df = df.copy()
+    df["risk_decile"] = pd.qcut(df["risk_factor"], 10, labels=[f"D{i}" for i in range(1,11)])
+    months = np.arange(1,13)
+    recs = []
+    for d,sub in df.groupby("risk_decile"):
+        base = sub["risk_factor"].mean() if len(sub) else 0.1
+        cum = np.cumsum(np.full_like(months, base/12))
+        for m,c in zip(months,cum):
+            recs.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c,0.95))})
+    chart = alt.Chart(pd.DataFrame(recs)).mark_line().encode(
+        x=alt.X("month:Q", title="Mes"),
+        y=alt.Y("cum_risk:Q", title="Riesgo acumulado"),
+        color="decile:N",
+        tooltip=["decile","month","cum_risk"]
+    ).properties(height=260)
+    st.altair_chart(chart, use_container_width=True)
+
+def top_features_bar(top_features):
+    df = pd.DataFrame(top_features)
+    if df.empty: return
+    chart = alt.Chart(df).mark_bar().encode(
+        x=alt.X("contrib:Q", title="Contribución"),
+        y=alt.Y("name:N", sort="-x", title="Factor"),
+        tooltip=["name","contrib"]
+    ).properties(height=180)
+    st.altair_chart(chart, use_container_width=True)
+
+def scenario_bars(summary_df):
+    chart = alt.Chart(summary_df).mark_bar().encode(
+        x=alt.X("scenario:N", title="Escenario"),
+        y=alt.Y("value:Q", title="Valor"),
+        tooltip=["metric","value"],
+        color="metric:N"
+    ).properties(height=240)
+    st.altair_chart(chart, use_container_width=True)
