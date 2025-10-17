@@ -1,4 +1,4 @@
-# pages/1_Dashboard.py
+# pages/1_Dashboard.py (encabezado)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,6 +13,19 @@ from components.charts import risk_hist, region_heat, survival_deciles
 from components.cohort_filters import cohort_builder
 
 st.set_page_config(page_title="Dashboard Ejecutivo", page_icon="📊", layout="wide")
+
+# Altair sin límite de filas (por si en algún momento pasas DF grandes)
+try:
+    alt.data_transformers.disable_max_rows()
+except Exception:
+    pass
+
+country, role = role_country_selector()
+debug = st.sidebar.toggle("Modo debug (curvas)", value=False)
+
+
+
+
 
 country, role = role_country_selector()
 
@@ -52,7 +65,8 @@ st.subheader("Curvas de riesgo acumulado por decil")
 if df_cohort.empty:
     st.info("No hay datos para la cohorte seleccionada.")
 else:
-    survival_deciles(df_cohort)
+    survival_deciles(df_cohort, debug=debug)
+
 
 # ================================
 # Exploraciones adicionales (5)
