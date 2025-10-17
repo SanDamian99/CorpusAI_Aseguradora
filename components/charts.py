@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-__all__ = ["risk_hist", "region_heat", "survival_deciles"]
+__all__ = ["risk_hist", "region_heat", "survival_deciles", "top_features_bar", "scenario_bars"]
 
 # Altair sin límite de filas (por si pasas DF grandes)
 try:
@@ -169,12 +169,17 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
     force_single = df["risk_decile"].isna().all()
 
     # --- Construcción de curvas ---
-    months = np.arange(1, 13)
+    months = np.arange(1, 13, dtype=int)
     records = []
+
+    def _cum_from_base(base: float) -> np.ndarray:
+        # ✅ MUY IMPORTANTE: crear vector en FLOAT para evitar truncamiento a 0
+        step = float(base) / 12.0
+        return np.cumsum(np.full(len(months), step, dtype=float))
 
     if not seg_ok or force_single:
         base = float(df["risk_factor"].mean() or 0.05)
-        cum = np.cumsum(np.full_like(months, base / 12.0))
+        cum = _cum_from_base(base)
         for m, c in zip(months, cum):
             records.append({"decile": "Cohorte", "month": int(m), "cum_risk": float(min(c, 0.95))})
         seg_counts = None
@@ -182,11 +187,11 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
         # Curvas por grupo
         for d, sub in df.dropna(subset=["risk_decile"]).groupby("risk_decile", observed=False):
             base = float(sub["risk_factor"].mean() or 0.05)
-            cum = np.cumsum(np.full_like(months, base / 12.0))
+            cum = _cum_from_base(base)
             for m, c in zip(months, cum):
                 records.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c, 0.95))})
 
-        # Conteo robusto, sin depender de nombres implícitos (y preserva orden de categorías)
+        # Conteo robusto (y preserva orden de categorías)
         vc = df["risk_decile"].value_counts(dropna=False)
         seg_counts = pd.DataFrame({"group": vc.index.astype(str), "n": vc.values})
         if pd.api.types.is_categorical_dtype(df["risk_decile"].dtype):
@@ -221,3 +226,120 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
         .properties(height=260)
     )
     st.altair_chart(chart, use_container_width=True)
+
+
+# ---------------------------------------------------
+# 4) Barras de “feature contributions” (suscripción)
+# ---------------------------------------------------
+def top_features_bar(contribs, top_n: int = 10, title: str = "Contribución al riesgo (±)") -> None:
+    """
+    Dibuja barras horizontales con contribuciones (positivas/negativas).
+    - `contribs` puede ser dict {feature: value} o DataFrame con
+      columnas ['feature', 'contribution'] (se intentan inferencias).
+    """
+    # Normalización de input
+    if isinstance(contribs, dict):
+        df = pd.DataFrame({"feature": list(contribs.keys()), "contribution": list(contribs.values())})
+    else:
+        df = pd.DataFrame(contribs).copy()
+        # Intento de inferir nombres
+        cols = {c.lower(): c for c in df.columns}
+        fcol = cols.get("feature") or cols.get("name") or list(df.columns)[0]
+        vcol = cols.get("contribution") or cols.get("value") or list(df.columns)[1]
+        df = df.rename(columns={fcol: "feature", vcol: "contribution"})[["feature", "contribution"]]
+
+    if df.empty:
+        st.info("No hay contribuciones para mostrar.")
+        return
+
+    df["abs"] = df["contribution"].abs()
+    df = df.sort_values("abs", ascending=False).head(top_n)
+    df["sign"] = np.where(df["contribution"] >= 0, "Aumenta riesgo", "Disminuye riesgo")
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X("contribution:Q", title="Contribución"),
+            y=alt.Y("feature:N", sort="-x", title=None),
+            color=alt.Color("sign:N", title="Signo", scale=alt.Scale(domain=["Aumenta riesgo","Disminuye riesgo"], range=["#1f77b4", "#aec7e8"])),
+            tooltip=["feature", alt.Tooltip("contribution:Q", format=".4f"), "sign"],
+        )
+        .properties(height=28 * len(df) + 20, title=title)
+    )
+
+    # Etiquetas al final de las barras
+    text = chart.mark_text(
+        align="left",
+        dx=4
+    ).encode(
+        text=alt.Text("contribution:Q", format=".3f")
+    )
+
+    st.altair_chart(chart + text, use_container_width=True)
+
+
+# --------------------------------------------
+# 5) Barras de escenarios (simulador financiero)
+# --------------------------------------------
+def scenario_bars(data, x=None, y=None, color=None, title: str = "Escenarios") -> None:
+    """
+    Dibuja barras comparativas de escenarios.
+    Acepta:
+      - list[dict], dict, o DataFrame.
+    Modos:
+      - Largo (recomendado): columnas ['scenario','metric','value'].
+      - Ancho: columnas ['scenario', <métricas...>] -> se "melt".
+      - Sencillo: columnas ['name','value'] o dict simple -> una sola métrica.
+    Parámetros x/y/color se infieren si no se pasan.
+    """
+    # Normaliza a DataFrame
+    if isinstance(data, dict):
+        # dict simple -> una métrica
+        df = pd.DataFrame([{"scenario": k, "value": v} for k, v in data.items()])
+    elif isinstance(data, list):
+        df = pd.DataFrame(data)
+    else:
+        df = pd.DataFrame(data).copy()
+
+    if df.empty:
+        st.info("No hay datos de escenarios para graficar.")
+        return
+
+    cols_low = [c.lower() for c in df.columns]
+    colmap = {c.lower(): c for c in df.columns}
+
+    # Intento automático de forma larga
+    if {"scenario", "metric", "value"}.issubset(set(cols_low)):
+        scenario_col = colmap["scenario"]
+        metric_col = colmap["metric"]
+        value_col = colmap["value"]
+        long_df = df[[scenario_col, metric_col, value_col]].rename(columns={
+            scenario_col: "scenario", metric_col: "metric", value_col: "value"
+        })
+    else:
+        # ¿Ancho con 'scenario'?
+        if "scenario" in cols_low:
+            scenario_col = colmap["scenario"]
+            metric_cols = [c for c in df.columns if c != scenario_col]
+            if len(metric_cols) == 0:
+                # Sencillo: renombrar como value
+                long_df = df.rename(columns={df.columns[0]: "scenario", df.columns[1]: "value"})
+                long_df["metric"] = "valor"
+                long_df = long_df[["scenario", "metric", "value"]]
+            else:
+                long_df = df.melt(id_vars=[scenario_col], var_name="metric", value_name="value")
+                long_df = long_df.rename(columns={scenario_col: "scenario"})
+        else:
+            # Sencillo: columnas ['name','value'] o dos columnas cualquiera
+            if set(["name", "value"]).issubset(set(cols_low)):
+                long_df = df.rename(columns={colmap["name"]: "scenario", colmap["value"]: "value"})
+                long_df["metric"] = "valor"
+                long_df = long_df[["scenario", "metric", "value"]]
+            elif df.shape[1] >= 2:
+                long_df = df.iloc[:, :2].copy()
+                long_df.columns = ["scenario", "value"]
+                long_df["metric"] = "valor"
+                long_df = long_df[["scenario", "metric", "value"]]
+            else:
+                st.info("Estructura de esce
