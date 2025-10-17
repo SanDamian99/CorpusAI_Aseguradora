@@ -1,7 +1,7 @@
 # CorpusAI_Aseguradora
 Version propuesta de la interfaz para aseguradoras
 
-"""
+'''
 streamlit-corpus-insurers/
 ├─ Home.py
 ├─ pages/
@@ -22,4 +22,4 @@ streamlit-corpus-insurers/
 ├─ .streamlit/
 │  └─ config.toml
 └─ requirements.txt
-"""
+'''
