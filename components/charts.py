@@ -1,3 +1,8 @@
+import altair as alt
+import numpy as np
+import pandas as pd
+import streamlit as st
+
 def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
     """
     Curvas de riesgo acumulado por grupos (hasta 10).
