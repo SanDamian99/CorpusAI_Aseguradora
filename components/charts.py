@@ -1,8 +1,93 @@
+# components/charts.py
+# -----------------------------------------------
+# Gráficos reutilizables para el piloto de CorpusAI
+# -----------------------------------------------
+
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
 
+__all__ = ["risk_hist", "region_heat", "survival_deciles"]
+
+# Altair sin límite de filas (por si pasas DF grandes)
+try:
+    alt.data_transformers.disable_max_rows()
+except Exception:
+    pass
+
+
+# ---------------------------
+# 1) Histograma de riesgo
+# ---------------------------
+def risk_hist(df: pd.DataFrame) -> None:
+    """Histograma de risk_factor con bins automáticos."""
+    if df is None or df.empty or "risk_factor" not in df.columns:
+        st.info("No hay datos de riesgo para graficar el histograma.")
+        return
+
+    data = df[["risk_factor"]].dropna()
+    if data.empty:
+        st.info("No hay valores válidos de 'risk_factor' para el histograma.")
+        return
+
+    chart = (
+        alt.Chart(data)
+        .mark_bar()
+        .encode(
+            x=alt.X("risk_factor:Q", bin=alt.Bin(maxbins=30), title="Riesgo"),
+            y=alt.Y("count():Q", title="Pacientes"),
+            tooltip=[alt.Tooltip("count():Q", title="N")],
+        )
+        .properties(height=260)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
+# ---------------------------
+# 2) “Heat” por región
+# ---------------------------
+def region_heat(df: pd.DataFrame) -> None:
+    """Barra coloreada por región según riesgo promedio (heat simple)."""
+    if (
+        df is None
+        or df.empty
+        or "region" not in df.columns
+        or "risk_factor" not in df.columns
+    ):
+        st.info("No hay datos suficientes para graficar el 'heat' por región.")
+        return
+
+    agg = (
+        df.groupby("region", as_index=False, observed=False)
+        .agg(risk_mean=("risk_factor", "mean"), n=("patient_id", "count"))
+        .sort_values("risk_mean", ascending=False)
+    )
+
+    if agg.empty:
+        st.info("No hay agregaciones para mostrar por región.")
+        return
+
+    chart = (
+        alt.Chart(agg)
+        .mark_bar()
+        .encode(
+            y=alt.Y("region:N", title="Región", sort="-x"),
+            x=alt.X("risk_mean:Q", title="Riesgo promedio"),
+            color=alt.Color(
+                "risk_mean:Q", title="Riesgo promedio", scale=alt.Scale(scheme="blues")
+            ),
+            tooltip=["region", "n", alt.Tooltip("risk_mean:Q", format=".3f")],
+        )
+        .properties(height=260)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
+# -----------------------------------------------
+# 3) Curvas acumuladas por (hasta) 10 “deciles”
+#    (versión robusta con panel de debug opcional)
+# -----------------------------------------------
 def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
     """
     Curvas de riesgo acumulado por grupos (hasta 10).
@@ -101,11 +186,9 @@ def survival_deciles(df: pd.DataFrame, debug: bool = False) -> None:
             for m, c in zip(months, cum):
                 records.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c, 0.95))})
 
-        # ✅ ROBUSTO: construir seg_counts sin depender de nombres implícitos
+        # Conteo robusto, sin depender de nombres implícitos (y preserva orden de categorías)
         vc = df["risk_decile"].value_counts(dropna=False)
         seg_counts = pd.DataFrame({"group": vc.index.astype(str), "n": vc.values})
-
-        # Preservar orden de categorías si aplica (evita 'D1','D10','D2' desordenado)
         if pd.api.types.is_categorical_dtype(df["risk_decile"].dtype):
             order = df["risk_decile"].cat.categories.astype(str).tolist()
             seg_counts["group"] = pd.Categorical(seg_counts["group"], categories=order, ordered=True)
