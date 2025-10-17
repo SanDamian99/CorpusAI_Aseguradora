@@ -124,17 +124,13 @@ else:
 
     # ========== (D) Heatmap Utilizaciones vs Riesgo ==========
     st.markdown("**D. Uso de servicios vs Riesgo (heatmap binned)**")
-    hmap = alt.Chart(df_cohort).transform_bin(
-        "util_bin", field="utilizations_12m", bin=alt.Bin(maxbins=20)
-    ).transform_bin(
-        "risk_bin", field="risk_factor", bin=alt.Bin(maxbins=20)
-    ).transform_aggregate(
-        count="count()", groupby=["util_bin", "risk_bin"]
-    ).mark_rect().encode(
-        x=alt.X("util_bin:Q", title="Utilizaciones 12m (binned)"),
-        y=alt.Y("risk_bin:Q", title="Riesgo (binned)"),
-        color=alt.Color("count:Q", title="N", scale=alt.Scale(scheme="blues")),
-        tooltip=["util_bin","risk_bin","count"]
+    hmap = alt.Chart(df_cohort).mark_rect().encode(
+        x=alt.X("utilizations_12m:Q", bin=alt.Bin(maxbins=20), title="Utilizaciones 12m (binned)"),
+        y=alt.Y("risk_factor:Q",       bin=alt.Bin(maxbins=20), title="Riesgo (binned)"),
+        color=alt.Color("count():Q", title="N"),
+        tooltip=[
+            alt.Tooltip("count():Q", title="N"),
+        ],
     ).properties(height=260)
     st.altair_chart(hmap, use_container_width=True)
 
