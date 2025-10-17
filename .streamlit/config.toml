@@ -1,12 +1,13 @@
 [theme]
-base="dark"
-primaryColor="#08d19f"
-backgroundColor="#0b0f14"
-secondaryBackgroundColor="#121823"
-textColor="#e6f0ff"
-font="sans serif"
+# Paleta Corpus: blanco (fondo), azul claro (sidebar), azul oscuro (acentos)
+base = "light"
+primaryColor = "#0A2A6A"            # Azul oscuro (botones, sliders, acentos)
+backgroundColor = "#FFFFFF"         # Blanco (lienzo principal)
+secondaryBackgroundColor = "#EAF3FF" # Azul claro muy suave (sidebar / paneles)
+textColor = "#0B1B34"               # Azul muy oscuro / casi negro (lectura óptima)
+font = "sans serif"
 
 [server]
-headless=true
-enableCORS=false
-enableXsrfProtection=false
+headless = true
+enableCORS = false
+enableXsrfProtection = false
