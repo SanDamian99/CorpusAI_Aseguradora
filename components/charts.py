@@ -30,46 +30,97 @@ def region_heat(df):
     st.altair_chart(chart, use_container_width=True)
 
 
-def survival_deciles(df):
-    """Curvas acumuladas por 'deciles' (robusta a cohortes pequeños o pocos valores únicos)."""
-    if df.empty or "risk_factor" not in df:
+def survival_deciles(df, debug: bool = False):
+    """Curvas acumuladas por 'deciles' (robusta a cohortes pequeños o pocos valores únicos).
+    Si debug=True, imprime trazas (en logs) y muestra st.write con info.
+    """
+    if df is None or df.empty:
+        if debug: 
+            print("[survival_deciles] df vacío")
+            st.write("DEBUG: df vacío")
         st.info("No hay datos de cohorte para graficar.")
         return
 
+    if "risk_factor" not in df.columns:
+        if debug:
+            print("[survival_deciles] 'risk_factor' no está en columnas:", df.columns.tolist())
+            st.write("DEBUG: 'risk_factor' no está en columnas")
+        st.info("No hay columna 'risk_factor' en la cohorte.")
+        return
+
+    # Asegurar tipo numérico
     df = df.copy()
+    df["risk_factor"] = pd.to_numeric(df["risk_factor"], errors="coerce")
+    df = df.dropna(subset=["risk_factor"])
+    if df.empty:
+        if debug:
+            print("[survival_deciles] Todos los 'risk_factor' son NaN tras conversión.")
+            st.write("DEBUG: 'risk_factor' quedó sin datos tras coerción")
+        st.info("No hay 'risk_factor' válido para graficar.")
+        return
+
     unique_vals = df["risk_factor"].nunique(dropna=True)
     q = int(max(2, min(10, unique_vals, len(df))))  # al menos 2 grupos
 
+    if debug:
+        print(f"[survival_deciles] n={len(df)}, unique_vals={unique_vals}, q={q}, mean_rf={df['risk_factor'].mean():.4f}")
+        st.caption(f"DEBUG — n={len(df)}, unique_vals={unique_vals}, q={q}, mean_rf={df['risk_factor'].mean():.4f}")
+
+    # Intentar qcut; si falla, usar cut
     try:
         df["risk_decile"] = pd.qcut(
             df["risk_factor"], q,
             labels=[f"D{i}" for i in range(1, q+1)],
             duplicates="drop"
         )
-    except Exception:
+    except Exception as e:
+        if debug:
+            print("[survival_deciles] qcut falló:", repr(e))
+            st.write("DEBUG: qcut falló → uso cut")
         df["risk_decile"] = pd.cut(
             df["risk_factor"], q,
             labels=[f"D{i}" for i in range(1, q+1)]
         )
 
     if df["risk_decile"].isna().all():
-        base = float(df["risk_factor"].mean() or 0.05)
+        # Fallback: curva única de cohorte
+        base = float(df["risk_factor"].mean() if pd.notnull(df["risk_factor"].mean()) else 0.05)
         months = np.arange(1, 13)
-        cum = np.cumsum(np.full_like(months, base/12))
+        cum = np.cumsum(np.full_like(months, base/12.0))
         data = pd.DataFrame({
             "decile": ["Cohorte"] * len(months),
             "month": months.astype(int),
             "cum_risk": np.minimum(cum, 0.95).astype(float)
         })
+        if debug:
+            print("[survival_deciles] fallback única curva — base=", base)
+            st.write("DEBUG: fallback única curva — base=", base)
     else:
+        # Construir curvas por grupo
         months = np.arange(1, 13)
         recs = []
-        for d, sub in df.dropna(subset=["risk_decile"]).groupby("risk_decile"):
-            base = float(sub["risk_factor"].mean() or 0.05)
-            cum = np.cumsum(np.full_like(months, base/12))
+        for d, sub in df.dropna(subset=["risk_decile"]).groupby("risk_decile", observed=False):
+            base = float(sub["risk_factor"].mean() if pd.notnull(sub["risk_factor"].mean()) else 0.05)
+            cum = np.cumsum(np.full_like(months, base/12.0))
             for m, c in zip(months, cum):
                 recs.append({"decile": str(d), "month": int(m), "cum_risk": float(min(c, 0.95))})
         data = pd.DataFrame(recs)
+        if debug:
+            # Muestra conteos por decil
+            counts = df["risk_decile"].value_counts(dropna=False).to_frame("n")
+            print("[survival_deciles] grupos:\n", counts.to_string())
+            st.write("DEBUG: grupos por decil", counts)
+
+    if data.empty:
+        if debug:
+            print("[survival_deciles] 'data' resultó vacío tras construcción")
+            st.write("DEBUG: 'data' vacío")
+        st.info("No fue posible construir la curva de supervivencia.")
+        return
+
+    if debug:
+        print("[survival_deciles] muestra data:\n", data.head().to_string())
+        st.write("DEBUG: muestra 'data'", data.head())
 
     chart = alt.Chart(data).mark_line().encode(
         x=alt.X("month:Q", title="Mes"),
