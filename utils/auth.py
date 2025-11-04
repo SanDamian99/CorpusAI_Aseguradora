@@ -2,7 +2,7 @@
 import streamlit as st
 
 ROLES = ["Director Médico / VP Salud", "Actuario / CFO", "Gestor de Casos", "Auditor Médico"]
-COUNTRIES = ["Colombia - EPS", "México - SGMM"]
+COUNTRIES = ["México - SGMM", "Colombia - EPS" ]
 
 def role_country_selector():
     with st.sidebar:
