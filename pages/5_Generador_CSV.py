@@ -45,7 +45,7 @@ with st.form("gen_form"):
 
     with colC:
         st.markdown("**Uplift por región en el score (mock)**")
-        regions = REGIONS_MX if ctx["country"] == "México" else REGIONS_CO
+        regions = REGIONS_MX if ctx["country_name"] == "México" else REGIONS_CO
         uplift_inputs = {}
         for r in regions:
             uplift_inputs[r] = st.slider(f"{r}", -0.50, 0.50, 0.00, 0.01, help="Ajuste aditivo al score lineal")
@@ -81,7 +81,7 @@ if submitted:
     # 1) Generar población
     df = generate_dummy_population(
         n=int(n),
-        country="México - SGMM" if ctx["country"] == "México" else "Colombia - EPS",
+        country = f"{ctx['country_name']} - {ctx['payer_model']}",
         seed=int(seed),
         p_smoker=float(p_smoker),
         p_dm=float(p_dm),
