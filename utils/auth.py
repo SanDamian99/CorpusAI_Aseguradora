@@ -1,10 +1,8 @@
 # utils/auth.py
+import unicodedata
 import streamlit as st
 from typing import Dict
 
-# -----------------------------
-# Configuración y mapeos globales
-# -----------------------------
 ROLES = [
     "Director Médico / VP Salud",
     "Actuario / CFO",
@@ -12,37 +10,50 @@ ROLES = [
     "Auditor Médico",
 ]
 
-# Opción combinada País/Modelo (compatible con tu código existente)
-COUNTRIES = ["México - SGMM", "Colombia - EPS"]
-
-# Metadatos derivados por opción
-_COUNTRY_META: Dict[str, Dict[str, str]] = {
-    "México - SGMM":   {"country_name": "México",   "country_code": "MX", "payer_model": "SGMM"},
-    "Colombia - EPS":  {"country_name": "Colombia",  "country_code": "CO", "payer_model": "EPS"},
-}
-# Para hidratar desde query param ?country=MX|CO
-_CODE_TO_OPTION = {"MX": "México - SGMM", "CO": "Colombia - EPS"}
-
-_DEFAULT_OPTION = "México - SGMM"  # ← México default como pediste
+COUNTRIES = ["México - SGMM", "Colombia - EPS"]  # opciones canónicas
+_DEFAULT_OPTION = "México - SGMM"
 _DEFAULT_ROLE = ROLES[0]
 
+_COUNTRY_META: Dict[str, Dict[str, str]] = {
+    "México - SGMM":  {"country_name": "México",  "country_code": "MX", "payer_model": "SGMM"},
+    "Colombia - EPS": {"country_name": "Colombia","country_code": "CO", "payer_model": "EPS"},
+}
+_CODE_TO_OPTION = {"MX": "México - SGMM", "CO": "Colombia - EPS"}
 
-# -----------------------------
-# Helpers internos
-# -----------------------------
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s))
+    s = s.encode("ascii", "ignore").decode("ascii")
+    return s.strip().lower()
+
+def _resolve_country_option(raw: str) -> str:
+    """Mapea 'México'|'MX'|'Colombia'|'CO' o ya canónico a una opción de COUNTRIES."""
+    if not raw:
+        return _DEFAULT_OPTION
+    s = str(raw).strip()
+    if s in COUNTRIES:
+        return s
+    up = s.upper()
+    if up in _CODE_TO_OPTION:
+        return _CODE_TO_OPTION[up]
+    n = _norm(s)
+    if n in ("mexico", "mexico - sgmm"):
+        return "México - SGMM"
+    if n in ("colombia", "colombia - eps"):
+        return "Colombia - EPS"
+    # fallback seguro
+    return _DEFAULT_OPTION
+
 def _apply_country(choice: str) -> None:
-    """Escribe en session_state la selección y sus derivados."""
-    meta = _COUNTRY_META.get(choice, _COUNTRY_META[_DEFAULT_OPTION])
-    st.session_state["country"] = choice                       # cadena combinada (p.ej. "México - SGMM")
-    st.session_state["country_name"] = meta["country_name"]    # "México" | "Colombia"
-    st.session_state["country_code"] = meta["country_code"]    # "MX" | "CO"
-    st.session_state["payer_model"] = meta["payer_model"]      # "SGMM" | "EPS"
-    # Mantén sincronizado el valor del selectbox si existe
-    st.session_state["country_select"] = choice
-
+    """Escribe en session_state la selección canónica y derivados."""
+    opt = _resolve_country_option(choice)
+    meta = _COUNTRY_META[opt]
+    st.session_state["country"] = opt                    # SIEMPRE en formato canónico
+    st.session_state["country_name"] = meta["country_name"]
+    st.session_state["country_code"] = meta["country_code"]
+    st.session_state["payer_model"] = meta["payer_model"]
+    st.session_state["country_select"] = opt
 
 def _hydrate_from_url() -> None:
-    """Lee ?country=MX|CO|texto y aplica país una sola vez si corresponde."""
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -52,74 +63,47 @@ def _hydrate_from_url() -> None:
         return
     if isinstance(raw, list):
         raw = raw[0]
-    raw = str(raw).strip()
-    # Acepta códigos y etiquetas completas
-    if raw.upper() in _CODE_TO_OPTION:
-        _apply_country(_CODE_TO_OPTION[raw.upper()])
-    elif raw in COUNTRIES:
-        _apply_country(raw)
-
+    _apply_country(raw)
 
 def _on_country_change():
-    """Callback cuando cambia el select de País/Modelo."""
     choice = st.session_state.get("country_select", _DEFAULT_OPTION)
     _apply_country(choice)
-    # Escribe código corto en la URL para persistir entre páginas
     try:
         st.query_params.update({"country": st.session_state["country_code"]})
     except Exception:
         pass
     st.rerun()
 
-
 def _on_role_change():
-    """Callback para reflejar el cambio de rol en session_state."""
     st.session_state["role"] = st.session_state.get("role_select", _DEFAULT_ROLE)
 
-
-# -----------------------------
-# API pública
-# -----------------------------
 def ensure_context(default_country: str = _DEFAULT_OPTION, default_role: str = _DEFAULT_ROLE) -> None:
-    """
-    Garantiza que el contexto (país/rol y derivados) exista en session_state.
-    - default_country acepta exactamente valores de COUNTRIES.
-    """
-    # Hidrata desde URL la primera vez, si aplica
+    # Hidrata una sola vez desde URL si no hay país en estado
     if "country" not in st.session_state:
         _hydrate_from_url()
-
-    # Establece defaults si aún no hay país/rol
-    if "country" not in st.session_state:
-        _apply_country(default_country)
-    else:
-        # Asegura que los derivados estén presentes (por si venían de versiones anteriores)
+    # Normaliza cualquier valor previo (e.g., "México", "MX") al formato canónico
+    if "country" in st.session_state:
         _apply_country(st.session_state["country"])
+    else:
+        _apply_country(default_country)
 
     st.session_state.setdefault("role", default_role)
-    # Mantén sincronizado el widget role_select si existe
     st.session_state.setdefault("role_select", st.session_state["role"])
 
-
 def role_country_selector(place: str = "sidebar"):
-    """
-    Dibuja los selectores de País/Modelo y Rol.
-    - `place="sidebar"` (default) o cualquier otro valor para dibujar en el cuerpo.
-    - Devuelve (country, role) para compatibilidad con código antiguo.
-    """
-    ensure_context()  # asegura estado antes de renderizar
-
+    ensure_context()
     container = st.sidebar if place == "sidebar" else st
 
-    # Índices actuales para no forzar index=0 en cada render
     try:
         c_idx = COUNTRIES.index(st.session_state["country"])
-    except ValueError:
+    except Exception:
+        _apply_country(_DEFAULT_OPTION)
         c_idx = COUNTRIES.index(_DEFAULT_OPTION)
 
     try:
         r_idx = ROLES.index(st.session_state["role"])
-    except ValueError:
+    except Exception:
+        st.session_state["role"] = _DEFAULT_ROLE
         r_idx = ROLES.index(_DEFAULT_ROLE)
 
     container.selectbox(
@@ -130,7 +114,6 @@ def role_country_selector(place: str = "sidebar"):
         on_change=_on_country_change,
         help="Alterna textos, métricas y KPIs (SGMM en México, EPS en Colombia).",
     )
-
     container.selectbox(
         "Rol",
         ROLES,
@@ -138,27 +121,16 @@ def role_country_selector(place: str = "sidebar"):
         key="role_select",
         on_change=_on_role_change,
     )
-
     container.caption("Vista piloto con datos sintéticos (no reales).")
 
-    # Devuelve valores para compatibilidad
     return st.session_state["country"], st.session_state["role"]
 
-
 def get_context() -> Dict[str, str]:
-    """
-    Devuelve un dict con:
-      - country        (ej. 'México - SGMM')
-      - country_name   ('México'|'Colombia')
-      - country_code   ('MX'|'CO')
-      - payer_model    ('SGMM'|'EPS')
-      - role           (rol seleccionado)
-    """
     ensure_context()
     return {
-        "country": st.session_state["country"],
-        "country_name": st.session_state["country_name"],
-        "country_code": st.session_state["country_code"],
-        "payer_model": st.session_state["payer_model"],
+        "country": st.session_state["country"],             # p.ej. "México - SGMM"
+        "country_name": st.session_state["country_name"],   # "México" | "Colombia"
+        "country_code": st.session_state["country_code"],   # "MX" | "CO"
+        "payer_model": st.session_state["payer_model"],     # "SGMM" | "EPS"
         "role": st.session_state["role"],
     }
